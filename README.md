@@ -153,7 +153,7 @@ Assesses the application of models like GPT-4 and Gemini in automating context e
 - **Link:** [AVeriTeC arXiv](https://arxiv.org/abs/2305.13117)
 
 **Sarol et al. Corpus**
-- **Source:** Sarol et al., 2024[span_36].
+- **Source:** Sarol et al., 2024.
 - **Description:** 3,063 annotated citation instances across 100 highly cited open-access papers.
 - **Application:** Training models for fine-grained citation accuracy classification and quotation error detection.
 - **Link:** [Bioinformatics Paper](https://doi.org/10.1093/bioinformatics/btae420)
