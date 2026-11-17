@@ -1,0 +1,528 @@
+\documentclass[journal]{IEEEtran}
+
+\usepackage{amsmath,amssymb,amsfonts,mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{cite}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\begin{document}
+
+\title{Detecting Misinterpreted but Genuine Citations Through Automated Claim Verification}
+
+\author{\IEEEauthorblockN{Tushar Kumar}
+\IEEEauthorblockA{Department of Information Technology\\
+Indian Institute of Information Technology, Allahabad\\
+Prayagraj, Uttar Pradesh, India\\
+Email: mhm2026010@iiita.ac.in}}
+
+\maketitle
+
+\begin{abstract}
+The accelerating volume of scholarly publishing and the widespread adoption of generative writing assistants have expanded one subtle yet widespread threat to scientific integrity: \emph{misinterpreted but genuine citations}. Unlike invented or phantom references, any misinterpreted genuine citation points to one more authentic, peer-reviewed publication with valid Digital Object Identifier (DOI) metadata and topical relevance, yet the citing assertion exaggerates, overgeneralizes, is conflating connection with causation, twists quantitative metrics, or directly contradicts the cited source's actual findings. Only catalog existence is verified by standard bibliographic validators. Existing citation-intent classifiers depend solely on the citing author's local phrasing and current scientific fact-checking benchmarks restrict check to isolated sentences matched against paper abstracts; this article is providing CEDAR (Claim-Evidence Decomposition, Attribution, and Risk-Calibrated Verification), the methodological framework for detecting misinterpreted genuine citations across the full-text scholarly manuscripts. Third, we move beyond rigid tri-state natural language inference (NLI) by introducing a continuous Epistemic Modality Delta ($\Delta_{\mathcal{E}}$), scope-divergence scoring, and neuro-symbolic quantitative tolerance verification, and construct a cohesion-penalized conversation window optimization and a bipartite claim-to-anchor projection that decomposes multi-clause citing sentences into the decontextualized atomic ideas paired with exact bibliographic targets, and design a section-weighted multimodal Reciprocal Rank Fusion (RRF) and cross-encoder reranking architecture that retrieves evidentiary rationales across the narrative prose, organized tables, and figure captions. Building on this observation, finally, to prevent uncalibrated false accusations in editorial workflows, uncertainty-aware decision is devised routing via split conformal prediction sets with finite-sample insignificant coverage guarantees. We conclude with a reproducible, leakage-free experimental evaluation protocol and an examination of socio-technical deployment barriers.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Citation Verification, Claim Verification, Scientific Natural Language Processing, Natural Language Inference, Multimodal Evidence Retrieval, Epistemic Calibration, Conformal Prediction, Citation Integrity.
+\end{IEEEkeywords}
+
+\section{Introduction}
+\IEEEPARstart{S}{cholarly} communication depends on the normative assumption that an inline citation verifiably grounds for the suggestion to which it is attached, in actual application; across empirical and theoretical disciplines, citations trace intellectual lineage, authenticate methodological choices, bound experimental assumptions, and anchor new claims within the peer-reviewed findings \cite{moravcsik1975some,jurgens2018measuring}, to a significant degree. In the recent period, nonetheless, two concurrent pressures have strained the reliability of this operation, such as the rapid growth of global publication volume, which is limiting the time peer reviewers can devote to auditing primary sources, and the increase of large language models (LLMs) in academic drafting workflows \cite{hosseini2024using,thorp2023chatgpt}. In this broader context, routinely termed ``hallucinated'' or phantom citations, empirical bibliometric audits are establishing that an equally damaging failure mode is widespread even in human-authored literature: \emph{misinterpreted but genuine citations} \cite{delacey1985accurate,greenberg2009citation,jergas2015quotation,mogull2017accuracy}; while early discussions of generative AI in science emphasized principally on outright reference fabrication.
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\caption{Stratified Epistemic Dimensions of Scholarly Citation Integrity and Verification}
+\label{tab:integrity_dimensions}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{L{2.5cm} L{4.2cm} L{4.2cm} Y}
+\toprule
+\textbf{Verification Layer} & \textbf{Core Epistemic Question} & \textbf{Primary Failure Mode} & \textbf{Representative Computational Audit Mechanism} \\
+\midrule
+1. Source Authenticity & Does the cited work genuinely exist as an indexed scholarly record? & Fabricated references, LLM-hallucinated phantom papers \cite{hosseini2024using,thorp2023chatgpt}. & Crossref, PubMed, and OpenAlex DOI resolution; digital catalog verification. \\
+2. Bibliographic Fidelity & Do the reference string fields match the official publication record? & Mutated author lists, wrong volume or pagination, corrupted DOIs \cite{simkin2003read,harzing2002referencing}. & Structured header/reference parsing via GROBID \cite{lopez2009grobid} and fuzzy record linkage. \\
+3. Topical Relevance & Does the cited document address the subject domain of the citing passage? & Perfunctory or honorary citation padding; citation metric gaming \cite{moravcsik1975some}. & Sparse lexical matching (BM25 \cite{robertson2009probabilistic}) and citation-graph document embeddings (SPECTER \cite{cohan2020specter}). \\
+4. Propositional Entailment & Does the full text of the cited work substantiate the atomic claim? & Unsubstantiated leaps, missing evidence, or directional contradiction \cite{wadden2020fact,wadden2022multivers}. & Discourse-scoped claim decomposition \cite{kamoi2023wice,min2023factscore}, hybrid retrieval, and cross-encoder NLI. \\
+5. Epistemic \& Scope Fidelity & Are hedging qualifiers, experimental bounds, and quantitative metrics preserved? & Speculative elevation, causal inflation, animal-to-human scope jump, numerical distortion \cite{greenberg2009citation,hyland1998hedging,mogull2017accuracy}. & Epistemic modality delta ($\Delta_{\mathcal{E}}$), table/chart verification \cite{lu2023scitab,akhtar2023reading}, and conformal risk calibration \cite{angelopoulos2023conformal,sadinle2019least}. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+To explain, a misinterpreted but genuine citation is arising when a citing manuscript references an authentic, cataloged, and topically pertinent publication keeping valid bibliographic metadata, broadly speaking. Yet the in-text assertion attached to that citation is particularly unsupported, exaggerated, overgeneralized, stripped of fundamental boundary conditions, or directly contradicted by the primary source \cite{greenberg2009citation,rekdal2014sinking,pavlovic2021accurate}, on the whole. Because, the cited work genuinely exists. Taken together, also, its Digital Object Identifier (DOI) is settling cleanly in bibliographic databases such as Crossref, PubMed, or OpenAlex, automated editorial screening tools classify this reference as valid. In effect, the prestige and bibliographic authenticity of the cited publication act as a veneer of legitimacy that masks an unprovened or twisted scientific claim.
+
+\subsection{Authenticity Versus Epistemic Support}
+To formalize this vulnerability, one must separate scholarly citation integrity into the five separate epistemic layers, encapsulated in Table~\ref{tab:integrity_dimensions}. Failing at Layers 4 and 5 (Propositional Entailment and Epistemic/Scope Fidelity). Still, a reference can fulfill all three lower layers, existing in the catalog, having exact metadata, and sharing high vocabulary overlap with the citing paragraph. Citation recommendation engines and document similarity models such as SPECTER \cite{cohan2020specter} operate at Layer 3 (Topical Relevance). Automated reference managers, publisher XML validators, and bibliographic parsers such as GROBID \cite{lopez2009grobid} operate exclusively at Layers 1 and 2 (Source Authenticity and Bibliographic Fidelity).
+
+That is, empirical meta-analyses across the medicine, biology, ecology, social sciences, and broad science corroborate that failures at Layers 4 and 5 are widespread, in real-world scenarios. In a foundational audit of six medical journals, de Lacey et al.\ \cite{delacey1985accurate} respected between bibliographic citation errors (24\% overall, 8\% major) and \emph{quotation errors}---where the citing text misrepresented or failed to reflect the original author's findings, reporting a 15\% quotation error rate, in many respects. Viewed through this lens, comparable patterns have been recorded in marine biology, where Todd et al.\ \cite{todd2010marine} found that 24.2\% of citations failed to unambiguously support the mentioned assertion, in regularly cited biomedical articles audited by Pavlovic et al.\ \cite{pavlovic2021accurate}, and in broad science and humanities journals analyzed by Smith and Cumberledge \cite{smith2020quotation}. A broad systematic review and meta-analysis of 28 studies covering 7,321 medical citations by Jergas and Baethge \cite{jergas2015quotation} estimated a pooled major quotation error rate of 11.9\% (with total quotation errors reaching 24.4\%). In the interim, mogull \cite{mogull2017accuracy} recalculated medical quotation error rates at 14.5\% after controlling for indirect citations.
+
+\subsection{Citation Contagion and Cascading Scientific Risk}
+Once a misinterpreted citation enters the peer-reviewed literature, it infrequently is remaining isolated; indeed, simultaneously, studies disproving the claim were systematically ignored, a phenomenon Greenberg termed \emph{unfounded authority} and \emph{citation distortion}, in many respects. Applying a stochastic model of duplicated typographic deviations in reference lists, Simkin and Roychowdhury \cite{simkin2003read} estimated that nearly 78\% of citing authors copy references from secondary sources without reading the original publication, to a significant degree. In light of this dynamic, harzing \cite{harzing2002referencing} and Rekdal \cite{rekdal2014sinking,rekdal2014urban} traced how secondhand citation copying transforms unsure hypotheses or misquoted statistics into the entrenched ``academic urban legends.'' In a landmark network analysis of 242 publications and 675 citations studying the conjecture that $\beta$-amyloid protein is pathologically generated inside skeletal muscle fibers in inclusion body myositis, Greenberg \cite{greenberg2009citation} showed how speculative discussion remarks were repeatedly cited as final empirical proof. In preclinical and clinical research, where reproducibility is already fragile \cite{ioannidis2005why,begley2012raise}, such citation cascades can (in practical terms) misdirect experimental funding, warp clinical guidelines, and propagate mistaken benchmark baselines.
+
+\subsection{Contributions of This Work}
+Despite rapid progress in automated fact-checking \cite{thorne2018fever,zeng2021automated} and scientific natural language processing (NLP) \cite{wadden2020fact,vladika2023scientific}, existing verification pipelines remain ill-equipped to audit misinterpreted genuine citations in full-text manuscripts. From this perspective, to bridge this gap, this article constructs a thorough methodological framework, CEDAR (\textbf{C}laim-\textbf{E}vidence \textbf{D}ecomposition, \textbf{A}ttribution, and \textbf{R}isk-Calibrated Verification)---making four primary insights:
+\begin{enumerate}
+\item \textbf{Problem Formalization and Grounded Taxonomy:} The difference is formalized between bibliographic validity, topical similarity, and discourse-scoped epistemic entailment, and establish an eight-class taxonomy of citation misinterpretation grounded in validated empirical audits \cite{delacey1985accurate,greenberg2009citation,jergas2015quotation,mogull2017accuracy}, in actual application.
+\item \textbf{Discourse-Scoped Bipartite Claim Decomposition:} Stated separately, an optimization objective is, in practice, devised for pulling adaptive citation discourse windows and projecting multi-clause hypotactic citing sentences into the decontextualized atomic claim--anchor pairs $(c_k, a_i)$, removing cross-reference conflation in compound sentences \cite{kamoi2023wice,min2023factscore}, broadly speaking.
+\item \textbf{Multimodal Section-Weighted Evidence Retrieval and Epistemic Delta Verification:} We integrate lexical retrieval (BM25 \cite{robertson2009probabilistic}), thick citation-informed embeddings (SPECTER \cite{cohan2020specter}), late-interaction token matching (ColBERT \cite{khattab2020colbert}), and arranged table/chart parsing (TaPas \cite{herzig2020tapas}, SCITAB \cite{lu2023scitab}, chart reasoning \cite{akhtar2023reading}) via section-weighted Reciprocal Rank Fusion \cite{cormack2009reciprocal}, and further introduce a continuous \emph{Epistemic Modality Delta} ($\Delta_{\mathcal{E}}$) and scope divergence metric to detect hedging erasure and causal inflation \cite{hyland1998hedging}, broadly speaking.
+\item \textbf{Conformal Risk Control and Reproducible Evaluation Protocol:} We frame distribution-free split conformal prediction sets \cite{sadinle2019least,angelopoulos2023conformal} that guarantee finite-sample insignificant coverage $1-\alpha$, routing unclear cases to human inspectors via explainable Verification Cards, and stipulate a complete, leakage-free experimental evaluation protocol, to a significant degree.
+\end{enumerate}
+
+The remainder of this article is organized in what follows manner, so Section~\ref{sec:gap_problem} is prescribing the research gap, mathematical problem formulation, research questions, and targets, in real-world scenarios. Section~\ref{sec:related} critically is reviewing related work, across the scientometrics, citation analysis, and scientific fact verification, in many respects. Section~\ref{sec:taxonomy} is providing the taxonomy of citation misinterpretation, distinguishing validated historical cases from illustrative diagnostic situations. Under these conditions, Section~\ref{sec:framework} details the 12-stage CEDAR architecture. Section~\ref{sec:math} is showing the mathematical statements and algorithmic design, which is why Section~\ref{sec:llm_critique} is examining the failure modes of LLMs in citation auditing. Section~\ref{sec:evaluation} details the suggested reproducible evaluation methodology. Section~\ref{sec:limitations} is addressing shortcomings, threats to validity, and future directions, and Section~\ref{sec:conclusion} concludes the paper.
+
+\section{Background and Critical Literature Review}
+\label{sec:related}
+
+\subsection{Scientometrics of Quotation Errors and Citation Cascades}
+Early scientometric research by Moravcsik and Murugesan \cite{moravcsik1975some} showed that nearly 40\% of citations in theoretical high-energy physics were perfunctory, serving to admit broad background rather than supply fundamental methodological or empirical premises, in actual application, and following audits separated citation errors into two orthogonal categories: \emph{bibliographic errors} (garbled metadata) and \emph{quotation errors} (content misrepresentation) \cite{delacey1985accurate,jergas2015quotation}. Against this backdrop, across clinical medicine \cite{delacey1985accurate,mogull2017accuracy,pavlovic2021accurate}, ecology and marine biology \cite{todd2010marine}, management science \cite{harzing2002referencing}, and broad science \cite{smith2020quotation}, empirical audits consistently reveal that 12\% to 25\% of citations fail to validate the particular idea for which they are cited, on the whole; Also Rekdal \cite{rekdal2014sinking,rekdal2014urban} and Greenberg \cite{greenberg2009citation} recorded that quotation errors are mostly directional, including catches, negative controls, and linguistic hedges \cite{hyland1998hedging} are stripped away as assertions are propagating through the secondary and tertiary citations.
+
+\subsection{Citation Context Analysis and Intent Classification}
+In computational linguistics, automated grouping of citation function was pioneered by Teufel et al.\ \cite{teufel2006automatic}, spotting whether a citing sentence contrasts findings, implements a approach, or proves background, to a significant degree. At production scale, Nicholson et al.\ \cite{nicholson2021scite} introduced \emph{scite}, training deep learning classifiers on millions of citation contexts (``citances'') to label citations as \emph{supporting}, \emph{mentioning}, or \emph{contrasting}, in actual application. In parallel with this, jurgens et al.\ \cite{jurgens2018measuring} expanded this strategy into six functional citation frames to model disciplinary evolution.
+
+Crucially, yet, citation intent category is an \emph{intra-document} rhetorical task rather than an \emph{inter-document} epistemic verification task, in many respects. Platforms such as scite \cite{nicholson2021scite} classify the rhetorical stance stated by the \emph{citing} author, within the citing snippet, broadly speaking. Within this framework, '' the citation is labeled by a citation-intent classifier as \emph{supporting} grounded in the phrase ``conclusively showed,'' even if Reference~$[j]$ actually reported a non-significant trend or an animal model study, if a citing author writes, ``Prior clinical trials by Author X conclusively showed a 50\% mortality reduction [j]. Detecting misinterpretation needs conditioning simultaneously on the citing setting and the full evidentiary content of the mentioned source.
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\caption{Critical Comparison of Existing Fact-Checking, Citation Analysis, and Scientific Verification Paradigms with CEDAR}
+\label{tab:literature_comparison}
+\renewcommand{\arraystretch}{1.14}
+\begin{tabularx}{\textwidth}{L{2.6cm} L{2.2cm} C{1.4cm} C{1.5cm} C{1.5cm} C{1.5cm} C{1.4cm} Y}
+\toprule
+\textbf{System / Benchmark} & \textbf{Primary Domain \& Source Granularity} & \textbf{Discourse Scoping} & \textbf{Bipartite Claim Split} & \textbf{Full-Text \& Tables} & \textbf{Epistemic Delta ($\Delta_{\mathcal{E}}$)} & \textbf{Conformal Bound} & \textbf{Key Limitation for Auditing Misinterpreted Genuine Citations} \\
+\midrule
+FEVER \cite{thorne2018fever} & Wikipedia articles (introductory text) & No (single sentence) & No & No (text only) & No & No & Synthetic crowd-written claims lack scientific hedging, multi-ref syntax, and quantitative metrics. \\
+scite \cite{nicholson2021scite} & Scholarly citances (citing text only) & Local citance window & No & No (ignores source text) & No & No & Classifies rhetorical intent of the citing author; does not verify entailment against the cited paper. \\
+SciFact \cite{wadden2020fact} & Biomedical claims vs.\ PubMed abstracts & No (rewritten claims) & No & No (abstracts only) & No & No & Abstracts omit ablation tables, negative sub-results, and specific baseline numbers cited in full text. \\
+COVID-Fact \cite{saakyan2021covidfact} & COVID-19 claims vs.\ lit./media snippets & No & No & Partial text snippets & No & No & Focuses on binary supported/refuted claims without modeling scope extrapolation or modality shift. \\
+MultiVerS \cite{wadden2022multivers} & Biomedical claims vs.\ full-document text & No & No & Full text (prose only) & No & No & Encodes long prose paragraphs via Longformer but ignores structured tables, charts, and multi-anchor clauses. \\
+WiCE \cite{kamoi2023wice} / FActScore \cite{min2023factscore} & Wikipedia / LLM long-form biographies & Single sentence & Sub-claim split & Web / Wiki prose & No & No & Decomposes propositions but lacks bipartite citation-anchor binding and scientific modality/scope calibration. \\
+ALCE \cite{gao2023enabling} / Rashkin \cite{rashkin2023measuring} & LLM-generated QA with citations & Prompt context & Sentence-level NLI & Retrieved web passages & No & No & Evaluates generative attribution via off-the-shelf NLI without numerical or conformal risk control. \\
+SCITAB \cite{lu2023scitab} / Akhtar \cite{akhtar2023reading} & Scientific tables and chart images & No & No & Isolated tables/charts & No & No & Operates on pre-isolated tables or charts rather than end-to-end full-text citation-to-source verification. \\
+\textbf{CEDAR (Proposed)} & \textbf{Full-text citing \& cited manuscripts} & \textbf{Cohesion window} & \textbf{Bipartite $(c_k, a_i)$} & \textbf{Prose + Tables + Captions} & \textbf{Yes ($\Delta_{\mathcal{E}}, D_{\text{scope}}$)} & \textbf{Yes ($1-\alpha$ bound)} & \textbf{Requires full-text access ($h_{\text{doc}}=1$) and calibrated domain-adapted NLI backbones.} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\subsection{Automated Fact Verification and Scientific NLI}
+The modern method of automated fact verification was standardized by the RTE challenges \cite{dagan2006pascal}, broad-coverage NLI corpora such as MultiNLI \cite{williams2018broad}, and the FEVER benchmark \cite{thorne2018fever,zeng2021automated}, which established a three-stage pipeline, like document retrieval, sentence selection, and three-way entailment category (\textsc{Supported}, \textsc{Refuted}, \textsc{NotEnoughInfo}), to a significant degree, yet as showed by Wadden et al.\ in SciFact \cite{wadden2020fact} and surveyed by Vladika and Matthes \cite{vladika2023scientific}, general-domain NLI models are degrading greatly on scientific claims due to specialized vocabulary, involved subordination, and quantitative comparisons, on the whole. Along these dimensions, domain-specific corpora including PubMedQA \cite{jin2019pubmedqa}, COVID-Fact \cite{saakyan2021covidfact}, and zero-shot claim generation frameworks \cite{wright2022generating} advanced biomedical claim verification, while MultiVerS \cite{wadden2022multivers} integrated weak supervision over full-document prose.
+
+Simultaneously, specialized benchmarks for scientific tables (TaPas \cite{herzig2020tapas}, SCITAB \cite{lu2023scitab}) and chart images \cite{akhtar2023reading} have revealed vital empirical proof often resides external narrative prose, in actual application. More lately, research on attribution in natural language generation, formalized under the Attributable to Identified Sources (AIS) framework by Rashkin et al.\ \cite{rashkin2023measuring} and instantiated for LLM citation generation by Gao et al.\ (ALCE) \cite{gao2023enabling}---and fine-grained claim decomposition via WiCE \cite{kamoi2023wice} and FActScore \cite{min2023factscore} have showed decomposing involved sentences into the atomic ideas greatly augments verification fidelity, in actual application.
+
+\section{Research Gap, Problem Formulation, and Research Questions}
+\label{sec:gap_problem}
+
+\subsection{Synthesis of the Research Gap}
+A critical comparison of the literature (Table~\ref{tab:literature_comparison}) exposes four particular, verifiable structural gaps in existing scientific verification systems:
+\begin{enumerate}
+\item \textbf{Multi-Anchor Syntactic Conflation and Discourse Truncation:} Beyond this, existing scientific verification benchmarks (SciFact \cite{wadden2020fact}, MultiVerS \cite{wadden2022multivers}) are appraising pre-extracted, standalone claims against a single target document, in actual application; in authentic manuscripts, nonetheless, citing sentences regularly are encompassing multiple sections anchored to diverse references, or rest on anaphoric pronouns whose antecedents are lying in prior sentences \cite{jurgens2018measuring,kamoi2023wice}, in actual application. Building on this observation, assessing a raw citing sentence against a single reference conflates claims meant for other citations, causing severe false-positive refutations.
+\item \textbf{The Abstract-Only and Prose-Only Bottleneck:} Claims are, in effect, verified solely against paper abstracts \cite{wadden2020fact,jin2019pubmedqa} by most scientific fact-checking frameworks. Yet authors routinely are citing papers from corpora such as S2ORC \cite{lo2020s2orc} for particular experimental baselines, ablation studies, or hyperparameter settings reported only in full-text sections, organized data tables \cite{herzig2020tapas,lu2023scitab}, or figure plots \cite{akhtar2023reading}, in many respects.
+\item \textbf{Insensitivity to Epistemic Modality and Scope Drift:} Standard NLI expressions \cite{williams2018broad,thorne2018fever} treat entailment as a discrete categorical decision. From this perspective, they lack definite mathematical processes to punish \emph{epistemic overclaiming}---where a hedged proposition (``may indicate a potential link'' \cite{hyland1998hedging}) is cited as an established causal fact \cite{greenberg2009citation}---or \emph{scope extrapolation}, where findings from a restricted group (e.g. murine \emph{in vitro} cells) are generalized to human clinical efficacy \cite{begley2012raise,mogull2017accuracy}, on the whole.
+\item \textbf{Uncalibrated Confidence and High-Stakes False Accusation Risk:} Neural NLI classifiers and generative LLMs exhibit severe miscalibration and sycophancy on out-of-distribution scientific text \cite{liu2024lost,angelopoulos2023conformal}, in real-world scenarios; indeed, existing citation checkers lack distribution-free statistical coverage guarantees to bound false accusations, before flagging a manuscript for editorial review \cite{sadinle2019least}, on the whole.
+\end{enumerate}
+
+\subsection{Formal Problem Statement}
+Let $D_{\text{cite}}$ represent a citing scholarly manuscript composed of a sequence of sentences $\mathcal{S} = (s_1, s_2, \dots, s_M)$ and a ordered bibliography $\mathcal{B} = \{b_1, b_2, \dots, b_J\}$, broadly speaking. In light of this dynamic, within $D_{\text{cite}}$, let $\mathcal{A} = \{a_1, a_2, \dots, a_I\}$ signify the set of inline citation anchors emerging in the text, where each individual anchor $a_i \in \mathcal{A}$ is appearing inside a focal sentence $s_{t(i)} \in \mathcal{S}$ and maps via a deterministic bibliographic resolution function $\mu: \mathcal{A} \to \mathcal{B}$ to a bibliography entry $b_j = \mu(a_i)$, to a significant degree.
+
+When $b_j$ solves to a genuine, cataloged publication $D_{\text{src}}^{(j)}$ with validated metadata (i.e., Layer 1 and Layer 2 checks pass), we represent $D_{\text{src}}^{(j)}$ as a multimodal collection of evidentiary units:
+\begin{equation}
+D_{\text{src}}^{(j)} = \mathcal{U}_{\text{prose}}^{(j)} \cup \mathcal{U}_{\text{table}}^{(j)} \cup \mathcal{U}_{\text{fig}}^{(j)} = \{e_1, e_2, \dots, e_{N_j}\},
+\label{eq:source_units}
+\end{equation}
+where each unit $e_r \in D_{\text{src}}^{(j)}$ belongs to a rhetorical section $z(e_r) \in \mathcal{Z}$ ($\text{Title}$, $\text{Abstract}$, $\text{Intro}$, $\text{Methods}$, $\text{Results}$, $\text{Discussion}$, $\text{Table}$, or $\text{Caption}$). In parallel with this, given a citation anchor $a_i$ and its solved source $D_{\text{src}}^{(j)}$, the automated citation verification problem is to: (i) pull the small conversation context $C(a_i)$ surrounding $s_{t(i)}$; (ii) decompose $C(a_i)$ into the decontextualized atomic propositions $\mathcal{C}(a_i) = \{c_{i,1}, \dots, c_{i,m_i}\}$ specifically attributed to $a_i$; (iii) retrieve a slight enough evidentiary rationale set $E^*(c_{i,k}) \subseteq D_{\text{src}}^{(j)}$; and (iv) compute a optimized verification tuple:
+\begin{equation}
+\mathcal{V}(c_{i,k}, D_{\text{src}}^{(j)}) = \Big(\hat{y}_{i,k},\; \mathcal{C}_{\alpha}(c_{i,k}, E^*),\; \Delta_{\mathcal{E}}(c_{i,k}, E^*),\; \hat{\tau}_{\text{err}}\Big),
+\label{eq:verification_tuple}
+\end{equation}
+where $\hat{y}_{i,k} \in \mathcal{Y}$ (including \textsc{Supported}, \textsc{Partially Supported}, \textsc{Contradicted}, and \textsc{Neutral}) is the point prediction, $\mathcal{C}_{\alpha} \subseteq \mathcal{Y}$ is a conformal prediction set fulfilling $\mathbb{P}(y^*_{i,k} \in \mathcal{C}_{\alpha}) \geq 1-\alpha$, $\Delta_{\mathcal{E}} \in [-1, 1]$ quantifies the epistemic modality shift, on the whole. Also $\hat{\tau}_{\text{err}}$ is the diagnosed misinterpretation category.
+
+\subsection{Research Questions and Measurable Objectives}
+To tackle the spotted gaps, the present examination studies four formal research questions:
+\begin{itemize}
+\item \textbf{RQ1 (Discourse-Scoped Bipartite Claim Attribution):} How can potentially multi-sentence discourse contexts and compound citing sentences including multiple inline references be mathematically decomposed into the decontextualized, citation-specific atomic suggestions without cross-reference interference?
+\item \textbf{RQ2 (Structure-Aware Multimodal Evidence Retrieval):} How can broadly lexical, thick citation-informed, late-interaction, and tabular/visual representations be fused with rhetorical section priors to maximize evidence recall across the full-text manuscripts?
+\item \textbf{RQ3 (Epistemic Modality Delta and Scope Alignment):} Beyond discrete tri-state NLI, how can theoretically continuous shifts in epistemic commitment (hedging erasure, causal inflation), experimental scope, and quantitative values be formally quantified?
+\item \textbf{RQ4 (Risk-Controlled Conformal Auditing):} How can, in this setting, perhaps split conformal prediction adjust verification uncertainty so that automated flags are sustaining a guaranteed upper bound $\alpha$ on false coverage errors while routing unclear claims to human reviewers?
+\end{itemize}
+
+Aligned with RQ1--RQ4, our measurable research objectives are: (O1) to design a cohesion-penalized window selector and bipartite clause-to-citation mapping algorithm; (O2) to devise a section-weighted multimodal Reciprocal Rank Fusion (RRF) and cross-encoder reranking pipeline; (O3) to obtain a composite verification score blending NLI entailment, Epistemic Modality Delta $\Delta_{\mathcal{E}}$, scope divergence $D_{\text{scope}}$, and quantitative tolerance $\delta_{\text{num}}$; and (O4) to assemble a split conformal prediction wrapper and reproducible evaluation protocol, in many respects.
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\caption{Analytical Taxonomy of Misinterpreted but Genuine Citations Grounded in Empirical Literature}
+\label{tab:misinterpretation_taxonomy}
+\renewcommand{\arraystretch}{1.14}
+\begin{tabularx}{\textwidth}{L{0.5cm} L{3.0cm} L{4.2cm} L{4.2cm} Y}
+\toprule
+\textbf{ID} & \textbf{Misinterpretation Class} & \textbf{Formal Epistemic Definition} & \textbf{Linguistic / Structural Signature} & \textbf{Primary Detection Signal in CEDAR} \\
+\midrule
+T1 & Speculative Elevation (Hedging Erasure) & Source presents an unverified hypothesis or future direction; citing text asserts it as proven empirical fact \cite{greenberg2009citation,hyland1998hedging}. & Deletion of modal auxiliaries (\emph{may, might, could}) and epistemic verbs (\emph{suggests, hypothesizes}); source located in Intro/Discussion. & High positive Epistemic Delta ($\Delta_{\mathcal{E}} > \tau_{\text{mod}}$) and low section authority weight $w_{z(e)}$. \\
+T2 & Causal Inflation & Source reports observational correlation or statistical association; citing text asserts a direct causal mechanism \cite{jergas2015quotation,mogull2017accuracy}. & Substitution of correlational predicates (\emph{associated with, linked to}) with causal verbs (\emph{causes, induces, drives}) despite observational study design. & Predicate-role mismatch between study design metadata and causal verb class in $c_k$. \\
+T3 & Scope \& Population Extrapolation & Source evaluates a restricted cohort (e.g., murine \emph{in vitro} cells or synthetic data); citing text generalizes to universal/clinical populations \cite{begley2012raise,pavlovic2021accurate}. & Removal of domain restrictors or insertion of universal quantifiers (\emph{all, universally, clinically proven in patients}). & Entity/population divergence $D_{\text{scope}}(c_k, E^*) > \tau_{\text{scope}}$ across PICO/benchmark slots. \\
+T4 & Directional Inversion (Finding Reversal) & Source reports a null effect, statistically non-significant trend, or opposite outcome; citing text claims positive support \cite{delacey1985accurate,todd2010marine}. & Polarity inversion or neglect of negation markers (\emph{no significant difference, failed to improve, $p > 0.05$}) in source Results. & High cross-encoder \textsc{Contradicted} posterior $P_{\Theta}(\textsc{Contradicted} \mid c_k, E^*)$. \\
+T5 & Quantitative \& Statistical Distortion & Direct misreporting of effect sizes, percentages, sample sizes $n$, $p$-values, or confidence intervals \cite{harzing2002referencing,rekdal2014urban}. & Order-of-magnitude decimal shifts, metric swapping, or reporting an upper confidence bound as a mean point estimate. & Neuro-symbolic numerical inequality/tolerance check $\delta_{\text{num}}(c_k, E^*) > \epsilon_{\text{tol}}$ over prose and tables \cite{lu2023scitab}. \\
+T6 & Partial \& Compound Conflation & Citing sentence combines multiple sub-claims where the source supports one clause but is silent on or refutes the others \cite{kamoi2023wice,min2023factscore}. & Multi-clause coordination or subordination anchored to a single citation or mismatched multi-citation brackets. & Sub-claim entailment variance across decomposed atomic units $\{c_{i,1}, \dots, c_{i,m_i}\}$. \\
+T7 & Caveat \& Boundary Erasure & Source explicitly conditions a finding on strict assumptions or limitations; citing text states the result unconditionally \cite{hyland1998hedging,smith2020quotation}. & Omission of conditional clauses (\emph{under alkaline conditions, assuming IID noise, when $d < 10$}). & Discourse condition-slot drop detected between source rationale $E^*$ and atomic claim $c_k$. \\
+T8 & Secondary Citation Cascade (Straw-Man / Herd) & Citing author copies a distorted claim from an intermediate secondary paper without consulting the primary work \cite{simkin2003read,rekdal2014sinking}. & Identical phrasing or shared numerical/page misprints matching an intermediate citing paper rather than $D_{\text{src}}^{(j)}$. & Zero lexical/semantic support in $D_{\text{src}}^{(j)}$ paired with high similarity to intermediate citing nodes. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section{Taxonomy and Case Analysis of Citation Misinterpretation}
+\label{sec:taxonomy}
+
+\subsection{Analytical Taxonomy of Citation Misinterpretation}
+Combining empirical findings from medical and biological, particularly regarding social science quotation audits \cite{delacey1985accurate,greenberg2009citation,harzing2002referencing,jergas2015quotation,mogull2017accuracy,pavlovic2021accurate,smith2020quotation}, misinterpreted but genuine citations into the eight operational classes (T1--T8), specified in Table~\ref{tab:misinterpretation_taxonomy} are organized, on the whole; unlike coarse binary error definitions, this taxonomy is separating rhetorical modality distortions (T1, T2, T7) from domain-transfer deviations (T3), polarity reversals (T4), quantitative mismatches (T5), syntactic decomposition failures (T6), and network propagation effects (T8), in real-world scenarios.
+
+\subsection{Authentic Historical Cases Versus Illustrative Diagnostic Scenarios}
+A critical methodological requirement in citation research is distinguishing between \emph{authentic, literature-documented historical cases} of citation distortion and \emph{illustrative diagnostic scenarios} constructed to test or explain algorithmic components \cite{rekdal2014sinking,rekdal2014urban}. Below, three corroborated historical cases from the peer-reviewed scientometric literature are first evaluated, followed by three synthetic diagnostic scenarios that are revealing how CEDAR's mathematical modules process domain-specific failure modes, on the whole.
+
+\subsubsection{Verified Historical Cases from Published Literature:}
+\begin{itemize}
+\item \textbf{Historical Case 1 ($\beta$-Amyloid in Inclusion Body Myositis --- Greenberg \cite{greenberg2009citation}):} Greenberg assessed 242 published articles and 675 citations studying whether $\beta$-amyloid precursor protein is pathologically stated in skeletal muscle fibers in inclusion body myositis (IBM), in real-world scenarios, and an early paper offered a unsure conjecture in its discussion section, which successive papers cited as an established experimental finding (Class T1, namely Speculative Elevation), to a significant degree. In parallel with this, simultaneously, primary experimental studies that failed to find $\beta$-amyloid mRNA differences in IBM muscle were either uncited or cited in ways that hid their negative findings (Class T4).
+\item \textbf{Historical Case 2 (Expatriate Failure Rates --- Harzing \cite{harzing2002referencing}):} Harzing traced widespread claims in international human resource management literature asserting that 16\% to 40\% of American expatriate managers fail and return prematurely from foreign assignments. Within this framework, auditing the citation trail back to the primary sources uncovered that the original empirical study did not measure actual expatriate failure rates at all, but rather surveyed personnel managers' rough perceptions, which ensuing authors repeatedly copied and raised into the hard statistical facts (Classes T1, T5, and T8).
+\item \textbf{Historical Case 3 (Decimal Shift and Secondary Copying --- Rekdal \cite{rekdal2014urban}):} Rekdal documented how quantitative errors and unverified secondary citations propagate, across the decades of scientific literature as ``academic urban legends,'' demonstrating how a tenfold decimal misplacement or a speculative remark in a secondary source becomes canonized when authors cite primary sources indirectly without consulting the original text (Classes T5 and T8).
+\end{itemize}
+
+\subsubsection{Illustrative Diagnostic Scenarios for Pipeline Walkthrough:}
+To reveal how an automated verification pipeline must process fine-grained textual, tabular, and quantitative divergences across the disciplines, we devise three synthetic diagnostic scenarios (distinctly appointed as illustrative test cases rather than published empirical audits):
+\begin{itemize}
+\item \textbf{Diagnostic Scenario A (Biomedical Model-to-Clinic Extrapolation --- Class T3):} Suppose a citing manuscript asserts: \emph{``Inhibiting pathway P38 via compound X clinically reverses cognitive decline in late-stage human patients.''} If the cited target paper $D_{\text{src}}$ actually reports an \emph{in vitro} neuroblastoma assay and a 14-day transgenic mouse trial ($n=8$) while unambiguously cautioning in its Discussion that human clinical efficacy remains untested, a surface-level bi-encoder retrieves high topical similarity, broadly speaking. Building on this observation, by comparison, cEDAR flags a severe population/scope divergence $D_{\text{scope}}$ and caveat erasure (Class T3/T7), broadly speaking.
+\item \textbf{Diagnostic Scenario B (Machine Learning Benchmark Overgeneralization --- Class T3/T6):} Suppose a citing sentence states: \emph{``Sparse Mixture-of-Experts (MoE) transformers consistently outperform dense models across all downstream NLP reasoning and translation benchmarks.''} If the cited paper's prose reports gains on pre-training perplexity and high-resource translation, in actual application. Within this framework, still its ablation table (e.g., Table~4) is revealing that thick models outperform the MoE variant on multi-step mathematical reasoning and low-resource translation, inspecting this citation needs joint reasoning over narrative text and organized tables \cite{herzig2020tapas,lu2023scitab} to disprove the universal quantifier \emph{``across all benchmarks.''}
+\item \textbf{Diagnostic Scenario C (Quantitative Decimal Shift in Materials Science --- Class T5):} In contrast, a tenfold relative mismatch ($\delta_{\text{num}} = |45 - 4.5|/4.5 = 9.0 \gg \epsilon_{\text{tol}}$) is detected by cEDAR's neuro-symbolic quantitative verification module and stripped boundary conditions (Classes T5 and T7), on the whole. Suppose a citing sentence claims: \emph{``Nitrogen-doped graphene achieves a 45\% enhancement in peak current density.''} If the cited source's results section and figure caption state a \emph{4.5\% increase}, under the alkaline conditions, lexical and packed embedding models allocate near-identical representations to ``45\%'' and ``4.5\%,'', in actual application.
+\end{itemize}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.96\textwidth]{images/fig1_system_architecture.pdf}
+\caption{End-to-end architecture of the proposed 12-stage CEDAR framework for detecting misinterpreted but genuine citations. Tier~1 ingests compiled PDFs, optimizes discourse context windows, and executes bipartite atomic claim-to-anchor decomposition. Tier~2 verifies bibliographic authenticity and performs section-weighted multimodal retrieval across prose, tables, and figure captions. Tier~3 computes NLI posteriors, Epistemic Modality Delta ($\Delta_{\mathcal{E}}$), numerical consistency, and split conformal prediction sets ($\mathcal{C}_{\alpha}$) to generate explainable human-in-the-loop Verification Cards.}
+\label{fig:architecture}
+\end{figure*}
+
+\section{Proposed CEDAR Verification Architecture}
+\label{sec:framework}
+
+To overcome the shortcomings of isolated sentence matching and abstract-only verification, CEDAR arrangements automated citation auditing into a 12-stage modular pipeline organized, across the three functional tiers, portrayed in Fig.~\ref{fig:architecture} and recapitulated systematically in Table~\ref{tab:pipeline_stages}, broadly speaking.
+
+\subsection{Tier 1: Document Ingestion, Discourse Scoping, and Bipartite Decomposition}
+\subsubsection{Stage 1 (Document Layout Parsing and Anchor Isolation):}
+\emph{Input:} Raw gathered PDF of the citing manuscript $D_{\text{cite}}$. \emph{Processing:} The ingestion module applies layout-aware sequence labeling via GROBID \cite{lopez2009grobid} to convert multi-column PDF streams into the ordered Text Encoding Initiative (TEI) XML, separating sentence boundaries $\mathcal{S} = (s_1, \dots, s_M)$, inline citation anchors $a_i \in \mathcal{A}$ (handling both numbered brackets $[j]$ and author--year strings), and organized bibliography records $\mathcal{B}$, broadly speaking. \emph{Output:} Indexed sentence sequence $\mathcal{S}$ and citation linkage map $\mu(a_i) = b_j$. Within this framework, \emph{Justification \& Limitations:} Accurate XML tree extraction is preventing footnote, header, and table-caption contamination, though heavily corrupted legacy PDF scans can still introduce OCR tokenization noise, in real-world scenarios.
+
+\subsubsection{Stage 2 (Cohesion-Weighted Discourse Window Extraction):}
+\emph{Input:} Focal citing sentence $s_{t(i)}$ and surrounding paragraph sentences $(s_{t-W}, \dots, s_{t+W})$; and thus, context window $C(a_i)$ are discoursed by \emph{Output:}. \emph{Processing:} Rather than employing a fixed single sentence ($w=0$), which is dropping premises introduced in prior sentences \cite{jurgens2018measuring}, CEDAR is evaluating discourse cohesion ties (anaphoric pronouns such as \emph{this method, their study}, lexical element overlap, and rhetorical connectives such as \emph{consequently, in contrast}) to choose an asymmetric window $C(a_i) = (s_{t-w^-}, \dots, s_t, \dots, s_{t+w^+})$, broadly speaking. \emph{Justification \& Limitations:} Captures multi-sentence arguments concluding with a citation; crashes only when an author places a citation at the end of a paragraph to cover an entire multi-page section without cohesive markers, on the whole.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{images/fig2_claim_decomposition.pdf}
+\caption{Discourse-scoped atomic claim decomposition and bipartite citation-anchor attribution (Stages 2--4). Resolving pronominal references and splitting subordinate contrast clauses prevents cross-reference contamination when verifying multi-citation sentences.}
+\label{fig:decomposition}
+\end{figure}
+
+\subsubsection{Stage 3 (Coreference Resolution and Atomic Claim Decomposition):}
+\emph{Input:} Discourse context $C(a_i)$. \emph{Processing:} Following atomic decomposition principles established in WiCE \cite{kamoi2023wice} and FActScore \cite{min2023factscore}, an instruction-tuned scientific language model restricted by dependency parse trees is solving pronominal anaphora to unambiguous canonical items and splits compound/subordinate sentences into the slight, self-contained ideas $\{c_1, \dots, c_m\}$, to a significant degree. \emph{Output:} Set of decontextualized atomic claims. \emph{Justification \& Limitations:} Eliminates false negatives caused by unresolved pronouns (e.g., ``it'') during the passage retrieval; over-decomposition of tightly coupled conditional sections must be prevented by preserving ``if/when'' condition modifiers inside each atomic suggestion, to a significant degree.
+
+\subsubsection{Stage 4 (Bipartite Claim-to-Citation Attribution):}
+\emph{Input:} Atomic propositions $\{c_1, \dots, c_m\}$, dependency tree of $s_{t(i)}$, and inline anchors $\{a_1, \dots, a_r\}$ in $C(a_i)$. Under these conditions, \emph{Output:} Attributed claim--source tuples $(c_{i,k}, b_j)$. \emph{Processing:} As showed in Fig.~\ref{fig:decomposition}, when a sentence encompasses multiple citations (e.g., contrasting Model~A $[12]$ with Model~B $[18]$), a syntactic scope resolver is computing dependency-path distance and clause-boundary dominance to assemble a bipartite graph matching each atomic claim $c_k$ exclusively to its governing citation anchor(s) $a_i$, on the whole. \emph{Justification \& Limitations:} Prevents inspecting a section meant for Reference~$[18]$ against Reference~$[12]$; is remaining vague when authors place a bundled bracket $[12\text{--}16]$ at the end of a synthesis sentence without per-clause attribution, broadly speaking.
+
+\subsection{Tier 2: Bibliographic Resolution and Multimodal Hierarchical Retrieval}
+\subsubsection{Stage 5 (Bibliographic Authenticity and Horizon Verification):}
+\emph{Input:} Bibliography entry $b_j = \mu(a_i)$. \emph{Justification \& Limitations:} is separating phantom/hallucinated references from genuine publications upfront and prevents false \textsc{Contradicted} verdicts when full text is behind a paywall, to a significant degree. \emph{Output:} Confirmed source document $D_{\text{src}}^{(j)}$ and horizon indicator $h_{\text{doc}} \in \{0, 1\}$. Building on this observation, \emph{Processing:} Queries Crossref, OpenAlex, and PubMed APIs to corroborate that $b_j$ settles to an authentic publication $D_{\text{src}}^{(j)}$ and checks title/author/year consistency, in actual application; if full text is accessible via OpenAlex, PubMed Central, or S2ORC \cite{lo2020s2orc}, the epistemic horizon flag is set to $h_{\text{doc}} = 1$; if commercial paywalls \cite{lariviere2015oligopoly} restrict access to the abstract only, $h_{\text{doc}} = 0$ is logged.
+
+\subsubsection{Stage 6 (Multimodal Source Document Indexing):}
+\emph{Input:} Full-text PDF or XML of $D_{\text{src}}^{(j)}$. Viewed through this lens, \emph{Processing:} Segments narrative text into the sliding 150-word passages labeled by rhetorical zone $z(e_r)$ \cite{teufel2006automatic}; while pulling arranged tables into row-column linearized representations compatible with TaPas \cite{herzig2020tapas} and SCITAB \cite{lu2023scitab} and pulling figure captions, alongside chart-derived data series \cite{akhtar2023reading}, to a significant degree. \emph{Output:} Unified multimodal evidence index $D_{\text{src}}^{(j)} = \{e_1, \dots, e_{N_j}\}$. \emph{Justification \& Limitations:} is ensuring that ablation metrics in tables and trends in figure captions are commonly retrievable as first-class evidentiary candidates, to a significant degree.
+
+\subsubsection{Stage 7 (Section-Weighted Hybrid Reciprocal Rank Fusion):}
+\emph{Input:} Atomic claim $c_{i,k}$ and source evidence pool $\{e_r\}_{r=1}^{N_j}$; rankings are combined via Reciprocal Rank Fusion (RRF) \cite{cormack2009reciprocal} weighted by rhetorical section priors $w_{z(e_r)}$ that are prioritizing \emph{Results}, \emph{Tables}, and \emph{Methods} over \emph{Introduction} background remarks. \emph{Processing:} is executing three parallel retrievers: (i) sparse BM25 lexical scoring \cite{robertson2009probabilistic} for exact entity/gene/metric matching; (ii) thick bi-encoder cosine similarity applying domain-adapted scientific encoders (SciBERT \cite{beltagy2019scibert}, SBERT \cite{reimers2019sentence}, DPR \cite{karpukhin2020dense}, SPECTER \cite{cohan2020specter}); and (iii) token-level late interaction via ColBERT \cite{khattab2020colbert}, to a significant degree. \emph{Justification \& Limitations:} Overcomes the ``topical overlap trap'' of pure bi-encoders while keeping sub-second retrieval latency, on the whole. In light of this dynamic, \emph{Output:} Top-$K_1$ candidate evidentiary units ($K_1 = 25$).
+
+\subsubsection{Stage 8 (Cross-Encoder Fine-Grained Reranking):}
+\emph{Input:} Claim $c_{i,k}$ and top-$K_1$ candidate units. \emph{Justification \& Limitations:} Captures fine-grained negation, comparatives and modifiers before invoking expensive reasoning modules. Against this backdrop, \emph{Output:} Ranked evidentiary rationale set $E^*$. \emph{Processing:} Concatenates $\texttt{[CLS]} \oplus c_{i,k} \oplus \texttt{[SEP]} \oplus e_r$ through a deep cross-attention transformer backbone to tokenly interact and pick the small rationale set $E^*(c_{i,k})$ of size $K_2 \leq 5$, broadly speaking.
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\caption{Stage-by-Stage Specification of the Proposed 12-Stage CEDAR Verification Pipeline}
+\label{tab:pipeline_stages}
+\renewcommand{\arraystretch}{1.13}
+\begin{tabularx}{\textwidth}{C{0.5cm} L{2.5cm} L{2.3cm} L{2.4cm} L{3.2cm} Y}
+\toprule
+\textbf{Stg.} & \textbf{Module Name} & \textbf{Primary Input} & \textbf{Primary Output} & \textbf{Core Algorithm / Model} & \textbf{Technical Justification \& Known Limitation} \\
+\midrule
+1 & Layout \& XML Ingestion & Raw citing PDF $D_{\text{cite}}$ & TEI-XML sentences $\mathcal{S}$, anchors $\mathcal{A}$, bib $\mathcal{B}$ & GROBID \cite{lopez2009grobid} CRF/BiLSTM sequence parsers & Isolates prose from headers/footnotes; degraded by low-DPI scanned legacy PDFs. \\
+2 & Discourse Window Selection & Focal sentence $s_{t(i)}$ & Context window $C(a_i)$ (Eq.~\ref{eq:window_opt}) & Cohesion-penalized boundary optimization \cite{jurgens2018measuring} & Recovers premises across sentence boundaries; cannot resolve unanchored whole-section citations. \\
+3 & Atomic Claim Decomposition & Context window $C(a_i)$ & Decontextualized claims $\{c_1, \dots, c_m\}$ & Dependency-guided LLM decomposition \cite{kamoi2023wice,min2023factscore} & Prevents pronoun ambiguity and multi-clause entanglement; requires condition preservation. \\
+4 & Bipartite Anchor Attribution & Claims $\{c_k\}$ \& anchors $\{a_i\}$ & Attributed pairs $(c_{i,k}, b_j)$ (Eq.~\ref{eq:bipartite}) & Syntactic dependency-tree dominance matching & Eliminates multi-reference cross-talk; bundled brackets $[1\text{--}5]$ require exhaustive check. \\
+5 & Bibliographic \& Horizon Check & Bib entry $b_j = \mu(a_i)$ & Resolved $D_{\text{src}}^{(j)}$ \& flag $h_{\text{doc}} \in \{0,1\}$ & Crossref/OpenAlex/S2ORC API linkage \cite{lo2020s2orc} & Filters hallucinated references and logs paywall truncation ($h_{\text{doc}}=0$) \cite{lariviere2015oligopoly}. \\
+6 & Multimodal Indexing & Full text of $D_{\text{src}}^{(j)}$ & Units $\mathcal{U}_{\text{prose}} \cup \mathcal{U}_{\text{table}} \cup \mathcal{U}_{\text{fig}}$ & Rhetorical zoning \cite{teufel2006automatic}, TaPas \cite{herzig2020tapas}, SCITAB \cite{lu2023scitab} & Exposes numerical tables and figure captions to retrieval; complex multi-panel blots remain hard. \\
+7 & Section-Weighted Hybrid RRF & Claim $c_{i,k}$ \& pool $\{e_r\}$ & Top-$K_1$ candidate passages ($K_1=25$) & BM25 \cite{robertson2009probabilistic} + SPECTER \cite{cohan2020specter} + ColBERT \cite{khattab2020colbert} RRF \cite{cormack2009reciprocal} & Combines exact entity matching with semantic recall and section authority priors $w_{z(e)}$. \\
+8 & Cross-Encoder Reranking & Claim $c_{i,k}$ \& top-$K_1$ units & Minimal rationale set $E^*$ ($K_2 \leq 5$) & Cross-attention transformer scorer \cite{wadden2022multivers} & Resolves bi-encoder topical overlap trap via token-by-token cross-attention. \\
+9 & Scientific NLI Adjudication & Pair $(c_{i,k}, E^*)$ & Probability vector $\hat{\mathbf{p}}(y \mid c_{i,k}, E^*)$ & MultiVerS / SciFact-tuned NLI classifier \cite{wadden2020fact,wadden2022multivers} & Evaluates multi-paragraph propositional entailment; restricted by context window length. \\
+10 & Epistemic Delta \& Num.\ Check & Pair $(c_{i,k}, E^*)$ & $\Delta_{\mathcal{E}}, D_{\text{scope}}, \delta_{\text{num}}$ (Eqs.~\ref{eq:epistemic_delta}--\ref{eq:num_check}) & Modality scorer \cite{hyland1998hedging} + symbolic quantity parser \cite{lu2023scitab} & Detects hedging erasure, causal inflation, and order-of-magnitude decimal shifts. \\
+11 & Split Conformal Calibration & Posteriors $\hat{\mathbf{p}}$ \& calib.\ set $\mathcal{D}_{\text{cal}}$ & Prediction set $\mathcal{C}_{\alpha}(c_{i,k}, E^*)$ (Eq.~\ref{eq:conformal_set}) & Split conformal set-valued classification \cite{sadinle2019least,angelopoulos2023conformal} & Guarantees $1-\alpha$ coverage and abstains under epistemic ambiguity ($|\mathcal{C}_{\alpha}| \geq 2$). \\
+12 & Explainable Verification Card & All stage outputs & Structured JSON/UI Audit Card & Token-level rationales \cite{rashkin2023measuring,gao2023enabling} \& severity $\mathcal{S}_{\text{sev}}$ & Provides transparent audit trail for editors and authors; keeps final judgment human-in-the-loop. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\subsection{Tier 3: Epistemic Inference, Calibration, and Audit Generation}
+\subsubsection{Stage 9 (Deep Scientific NLI Adjudication):}
+\emph{Input:} Atomic claim $c_{i,k}$ and retrieved rationale set $E^*(c_{i,k})$. From this perspective, \emph{Processing:} is computing the posterior probability distribution $\hat{\mathbf{p}}(y \mid c_{i,k}, E^*)$ over $y \in \mathcal{Y}$ employing a scientific cross-encoder trained with multi-task rationale supervision \cite{wadden2020fact,wadden2022multivers}, in many respects.
+
+\subsubsection{Stage 10 (Epistemic Modality Delta, Scope, and Numerical Verification):}
+\emph{Input:} \emph{Processing:} Evaluates three specialized consistency checks: (i) the Epistemic Modality Delta $\Delta_{\mathcal{E}}$ comparing linguistic commitment markers \cite{hyland1998hedging} in $c_{i,k}$ against $E^*$; (ii) arranged PICO/benchmark scope alignment $D_{\text{scope}}$; and (iii) neuro-symbolic quantitative and statistical inequality inspecting $\delta_{\text{num}}$ over pulled magnitudes, units, and $p$-values \cite{lu2023scitab,akhtar2023reading}, in many respects. Claim $c_{i,k}$ and rationale $E^*$.
+
+\subsubsection{Stage 11 (Split Conformal Uncertainty Calibration):}
+\emph{Input:} Over a held-out calibration corpus $\mathcal{D}_{\text{cal}}$, aligned posterior probabilities and non-conformity scores, which is why high-confidence automated categories are yielded by singleton sets ($|\mathcal{C}_{\alpha}| = 1$), broadly speaking, and by comparison, automatic abstention and human review are triggered by multi-label sets ($|\mathcal{C}_{\alpha}| \geq 2$). Taken together, \emph{Processing:} Constructs a distribution-free prediction set $\mathcal{C}_{\alpha}(c_{i,k}, E^*) \subseteq \mathcal{Y}$ guaranteed to include the true epistemic relationship with probability at least $1-\alpha$ \cite{sadinle2019least,angelopoulos2023conformal}, as showed in Fig.~\ref{fig:calibration}, in many respects.
+
+\subsubsection{Stage 12 (Explainable Verification Card and Human-in-the-Loop Audit):}
+\emph{Input:} Complete verification tuple $\mathcal{V}(c_{i,k}, D_{\text{src}}^{(j)})$. In parallel with this, \emph{Processing:} is generating an interactive Verification Card revealing the exact spans in $c_{i,k}$ responsible for positive $\Delta_{\mathcal{E}}$ or quantitative divergence, alongside verbatim quotes and table coordinates from $D_{\text{src}}^{(j)}$ \cite{rashkin2023measuring,gao2023enabling}, on the whole.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{images/fig3_epistemic_calibration.pdf}
+\caption{Epistemic Modality Delta ($\Delta_{\mathcal{E}}$) and Split Conformal Risk Control in CEDAR (Stages 10--11). (a) Mapping citing claim strength $S_{\text{claim}}(c_k)$ against source evidence strength $S_{\text{evid}}(E^*)$ separates acceptable hedging ($|\Delta_{\mathcal{E}}| \leq \tau_{\text{mod}}$) from speculative elevation and causal inflation ($\Delta_{\mathcal{E}} > \tau_{\text{mod}}$). (b) Split conformal calibration thresholds the non-conformity score $s(c_k, E^*, y)$ at quantile $\hat{q}_{1-\alpha}$, issuing autonomous flags only for unambiguous singleton sets ($|\mathcal{C}_{\alpha}|=1$) and routing ambiguous sets ($|\mathcal{C}_{\alpha}| \geq 2$) to human auditors.}
+\label{fig:calibration}
+\end{figure*}
+
+\section{Mathematical Formulation and Algorithmic Design}
+\label{sec:math}
+
+The mathematical equations are, strictly speaking, now formalized regulating each core computation in the CEDAR pipeline, stating every variable clearly, to a significant degree.
+
+\subsection{Cohesion-Penalized Discourse Window Selection}
+Let $s_t$ be the focal sentence covering citation anchor $a_i$, and let $W_{\max}$ be the maximum permissible window radius, within the current paragraph (commonly $W_{\max}=3$), broadly speaking. For candidate backward and forward offsets $(w^-, w^+) \in \{0, \dots, W_{\max}\}^2$, let $C_{w^-, w^+}(a_i) = (s_{t-w^-}, \dots, s_t, \dots, s_{t+w^+})$. We define the optimal discourse window $(w^{-*}, w^{+*})$ by maximizing a cohesion-minus-drift objective:
+\begin{equation}
+\begin{aligned}
+(w^{-*}, w^{+*}) = \arg\max_{0 \leq w^-, w^+ \leq W_{\max}} \Bigg[ & \sum_{u=t-w^-}^{t+w^+} \gamma^{|u-t|} \, \Phi_{\text{coh}}(s_u, s_t) \\
+& - \lambda_{\text{len}} (w^- + w^+) \\
+& - \lambda_{\text{cite}} \sum_{u \neq t} \mathbb{I}(\mathcal{A}_u \setminus \mathcal{A}_t \neq \emptyset) \Bigg],
+\end{aligned}
+\label{eq:window_opt}
+\end{equation}
+where $\gamma \in (0, 1)$ is a discourse distance decay factor, $\lambda_{\text{len}} > 0$ punishes unnecessary window expansion, $\mathcal{A}_u$ designates the set of citation anchors appearing in sentence $s_u$, $\mathbb{I}(\cdot)$ is the indicator function, and $\lambda_{\text{cite}} > 0$ penalizes absorbing adjacent sentences anchored to unrelated citations. From this perspective, the pairwise discourse cohesion function $\Phi_{\text{coh}}(s_u, s_t) \in [0, 1]$ is specified as:
+\begin{equation}
+\begin{aligned}
+\Phi_{\text{coh}}(s_u, s_t) = \;& \beta_1 \psi_{\text{coref}}(s_u, s_t) + \beta_2 \psi_{\text{conn}}(s_u, s_t) \\
+& + \beta_3 \frac{\langle \mathbf{h}(s_u), \mathbf{h}(s_t) \rangle}{\|\mathbf{h}(s_u)\|_2 \|\mathbf{h}(s_t)\|_2},
+\end{aligned}
+\label{eq:cohesion_score}
+\end{equation}
+where $\psi_{\text{coref}}(s_u, s_t) \in \{0, 1\}$ is suggesting whether $s_t$ encompasses an unresolved anaphoric expression whose antecedent lies in $s_u$, $\psi_{\text{conn}}(s_u, s_t) \in [0, 1]$ measures discourse connective continuity, $\mathbf{h}(\cdot) \in \mathbb{R}^d$ is a sentence embedding \cite{beltagy2019scibert,reimers2019sentence}, and $\beta_1 + \beta_2 + \beta_3 = 1$, in real-world scenarios.
+
+\subsection{Bipartite Claim Decomposition and Citation-Anchor Mapping}
+Let $\mathcal{C}(C^*(a_i)) = \{c_1, c_2, \dots, c_m\}$ signify the set of decontextualized atomic ideas pulled from the best window $C^*(a_i)$, and let $\mathcal{A}^* = \{a_1, \dots, a_r\}$ represent all inline citation anchors put forward in $C^*(a_i)$. Let $\ell(c_k, a_i)$ designate the syntactic liking logit between atomic claim $c_k$ and anchor $a_i$:
+\begin{equation}
+\begin{aligned}
+\ell(c_k, a_i) = \;& -\eta_1 d_{\text{dep}}(\pi(c_k), a_i) - \eta_2 d_{\text{tok}}(\pi(c_k), a_i) \\
+& + \eta_3 \mathbb{I}_{\text{clause}}(\pi(c_k), a_i),
+\end{aligned}
+\label{eq:bipartite_logit}
+\end{equation}
+where $\pi(c_k)$ is the syntactic head predicate of the source clause from which $c_k$ was pulled, $d_{\text{dep}}(\pi(c_k), a_i)$ is the shortest path length between $\pi(c_k)$ and anchor $a_i$ in the sentence dependency graph, $d_{\text{tok}}(\pi(c_k), a_i)$ is linear token distance, $\mathbb{I}_{\text{clause}}(\pi(c_k), a_i) \in \{0, 1\}$ equals $1$ if $a_i$ is controlled by the slight finite clause dominating $\pi(c_k)$, and $\eta_1, \eta_2, \eta_3 > 0$ are positive weights. Taken together, the normalized attribution probability $A(c_k, a_i)$ is then:
+\begin{equation}
+A(c_k, a_i) = \frac{\exp(\ell(c_k, a_i))}{\sum_{a_{i'} \in \mathcal{A}^*} \exp(\ell(c_k, a_{i'}))}.
+\label{eq:bipartite}
+\end{equation}
+Atomic claim $c_k$ is credited to anchor $a_i$ if and only if $A(c_k, a_i) \geq \tau_{\text{attr}}$ or $a_i = \arg\max_{a_{i'} \in \mathcal{A}^*} A(c_k, a_{i'})$, where $\tau_{\text{attr}} \in (0, 1)$ is the multi-anchor attribution threshold, on the whole.
+
+\subsection{Section-Weighted Multimodal Reciprocal Rank Fusion}
+Given an credited atomic claim $c_k$ and tackled source document $D_{\text{src}}^{(j)} = \{e_1, \dots, e_{N_j}\}$, each evidentiary unit $e_r$ (whether a narrative paragraph, a linearized table row/column from TaPas/SCITAB \cite{herzig2020tapas,lu2023scitab}, or a figure caption \cite{akhtar2023reading}) is substantially scored by three supplementary retrieval functions:
+\begin{enumerate}
+\item \emph{Sparse Lexical Matching (BM25 \cite{robertson2009probabilistic}):}
+\begin{equation}
+S_{\text{lex}}(c_k, e_r) = \sum_{q \in c_k} \text{IDF}(q) \cdot \frac{f(q, e_r)\,(k_1 + 1)}{f(q, e_r) + k_1 \left(1 - b + b \frac{|e_r|}{L_{\text{avg}}}\right)},
+\label{eq:bm25}
+\end{equation}
+where $f(q, e_r)$ is the term frequency of token $q$ in unit $e_r$, $|e_r|$ is the token length of $e_r$, $L_{\text{avg}}$ is, in effect, the mean unit length across $D_{\text{src}}^{(j)}$, on the whole. In light of this dynamic, also, $k_1, b$ are standard BM25 saturation and length-normalization coefficients.
+\item \emph{Dense Bi-Encoder Similarity \cite{beltagy2019scibert,cohan2020specter,karpukhin2020dense}:}
+\begin{equation}
+S_{\text{dense}}(c_k, e_r) = \frac{\langle E_{\text{claim}}(c_k), E_{\text{evid}}(e_r) \rangle}{\|E_{\text{claim}}(c_k)\|_2 \, \|E_{\text{evid}}(e_r)\|_2},
+\label{eq:dense_sim}
+\end{equation}
+where $E_{\text{claim}}$ and $E_{\text{evid}}$ are reliably domain-adapted transformer encoders.
+\item \emph{Contextualized Late Interaction (ColBERT MaxSim \cite{khattab2020colbert}):}
+\begin{equation}
+S_{\text{late}}(c_k, e_r) = \sum_{u=1}^{|c_k|} \max_{v=1, \dots, |e_r|} \langle \mathbf{E}_c^{(u)}, \mathbf{E}_e^{(v)} \rangle,
+\label{eq:colbert}
+\end{equation}
+where $\mathbf{E}_c^{(u)}, \mathbf{E}_e^{(v)} \in \mathbb{S}^{d-1}$ denote $\ell_2$-normalized contextualized token embeddings for the $u$-th token of $c_k$ and $v$-th token of $e_r$, in actual application.
+\end{enumerate}
+
+Let $\text{rank}_m(c_k, e_r) \in \{1, \dots, N_j\}$ signify the rank allocated to unit $e_r$ by retrieval modality $m \in \mathcal{M} = \{\text{lex}, \text{dense}, \text{late}\}$. Taken together, to integrate rhetorical section authority (preventing speculative remarks in an \emph{Introduction} from outranking empirical data in \emph{Results} or \emph{Tables}), we specify the Section-Weighted Reciprocal Rank Fusion (SW-RRF) score by generalizing Cormack et al.\ \cite{cormack2009reciprocal}:
+\begin{equation}
+S_{\text{SW-RRF}}(c_k, e_r) = w_{z(e_r)} \sum_{m \in \{\text{lex}, \text{dense}, \text{late}\}} \frac{\omega_m}{\kappa_{\text{rrf}} + \text{rank}_m(c_k, e_r)},
+\label{eq:sw_rrf}
+\end{equation}
+where $\kappa_{\text{rrf}} = 60$ is the RRF smoothing constant, $\omega_m > 0$ ($\sum_m \omega_m = 1$) weights each retrieval view; in turn, also, $w_{z(e_r)} \in (0, 1]$ is the rhetorical section prior (with $w_{\text{Results}} = w_{\text{Table}} = 1.0$, $w_{\text{Methods}} = w_{\text{Caption}} = 0.9$, $w_{\text{Abstract}} = 0.85$, $w_{\text{Discussion}} = 0.75$, and $w_{\text{Intro}} = 0.50$), in many respects; in fact, the top-$K_1$ candidates under $S_{\text{SW-RRF}}$ are then reranked by a cross-attention encoder $g_{\text{cross}}(c_k, e_r)$ to pick the top-$K_2$ evidentiary rationale set $E^*(c_k) = \{e_{r_1}, \dots, e_{r_{K_2}}\}$, in actual application.
+
+\subsection{Epistemic Modality Delta, Scope Divergence, and Numerical Verification}
+Standard NLI models output a categorical probability vector $\hat{\mathbf{p}}_{\Theta}(y \mid c_k, E^*)$ over $\mathcal{Y}$, yet fail when $c_k$ and $E^*$ share topical items while straying in epistemic certainty, experimental scope, or quantitative scale. Under these conditions, we formalize three supplementary verification metrics:
+
+\subsubsection{Epistemic Modality Delta (\texorpdfstring{$\Delta_{\mathcal{E:}}$}{Delta E})}
+Drawing on Hyland's taxonomy of scientific hedges and boosters \cite{hyland1998hedging}, let $S_{\text{claim}}(c_k) \in [0, 1]$ and $S_{\text{evid}}(E^*) \in [0, 1]$ denote continuous epistemic commitment scores estimated by a token-level modality regressor trained on hedged (\emph{suggests, may, plausible}, $S \approx 0.2$), neutral empirical (\emph{observed, measured}, $S \approx 0.65$), and booster/causal (\emph{proves, definitively establishes, causes}, $S \approx 0.95$) constructions. Viewed through this lens, adjusting for the rhetorical section authority $w_{z(e)}$ of the supporting passages in $E^*$, we specify the Epistemic Modality Delta as:
+\begin{equation}
+\Delta_{\mathcal{E}}(c_k, E^*) = S_{\text{claim}}(c_k) - \max_{e_r \in E^*} \Big( w_{z(e_r)} \cdot S_{\text{evid}}(e_r) \Big).
+\label{eq:epistemic_delta}
+\end{equation}
+On the contrary, conservative hedging is reflected by $\Delta_{\mathcal{E}} < -\tau_{\text{mod}}$; also, $|\Delta_{\mathcal{E}}| \leq \tau_{\text{mod}}$ indicates aligned epistemic fidelity. As, showed in Fig.~\ref{fig:calibration}(a), when $\Delta_{\mathcal{E}}(c_k, E^*) > \tau_{\text{mod}}$ (where $\tau_{\text{mod}} > 0$ is the tolerable rhetorical variation band), the citing author commits \emph{epistemic overclaiming} (Class T1 or T2), in real-world scenarios.
+
+\subsubsection{Structured Scope and Population Divergence (\texorpdfstring{$D_{\text{scope:}}$}{D scope})}
+Let $\mathcal{F}(x) = (\mathbf{f}_{\text{pop}}(x), \mathbf{f}_{\text{inter}}(x), \mathbf{f}_{\text{metric}}(x), \mathbf{f}_{\text{cond}}(x))$ signify a four-slot frame representation (Population/Dataset, Intervention/Model, Outcome Metric, and Boundary Condition) pulled from text $x$, with slot set $\mathcal{S}_{\text{slot}} = \{\text{pop}, \text{inter}, \text{metric}, \text{cond}\}$. Under these conditions, we specify the scope divergence score $D_{\text{scope}}(c_k, E^*) \in [0, 1]$ as:
+\begin{equation}
+D_{\text{scope}}(c_k, E^*) = 1 - \prod_{s \in \mathcal{S}_{\text{slot}}} \left( \text{sim}_{\text{ont}}\!\left(\mathbf{f}_s(c_k), \mathbf{f}_s(E^*)\right) \right)^{\nu_s},
+\label{eq:scope_div}
+\end{equation}
+where $\text{sim}_{\text{ont}}(\cdot, \cdot) \in [0, 1]$ measures asymmetric ontological subsumption (punishing upward generalization from narrow source entities such as \emph{murine in vitro cells} to broad claim entities such as \emph{human patients}; while permitting valid downward specialization), and $\nu_s > 0$ ($\sum_s \nu_s = 1$) weights each slot, in actual application.
+
+\subsubsection{Neuro-Symbolic Quantitative Tolerance Check (\texorpdfstring{$\delta_{\text{num:}}$}{delta num})}
+Let $\mathcal{Q}(c_k) = \{(v_q, u_q, \rho_q)\}_{q=1}^{Q}$ represent quantitative tuples pulled from $c_k$, where $v_q \in \mathbb{R}$ is a standardized quantitative value, $u_q$ is its canonical SI/statistical unit. Taken together, also, $\rho_q$ is its bound metric element, and let $\hat{v}_q(E^*)$ be the aligned magnitude pulled from prose or tables in $E^*$ \cite{herzig2020tapas,lu2023scitab}. The maximum relative quantitative difference is:
+\begin{equation}
+\delta_{\text{num}}(c_k, E^*) = \max_{q \in \{1, \dots, Q\}} \frac{|v_q - \hat{v}_q(E^*)|}{\max(|\hat{v}_q(E^*)|, \epsilon_0)},
+\label{eq:num_check}
+\end{equation}
+where $\epsilon_0 = 10^{-8}$ is preventing division by zero. In light of this dynamic, a quantitative distortion flag (Class T5) is normally triggered whenever $\delta_{\text{num}}(c_k, E^*) > \epsilon_{\text{tol}}$ (accounting for standard rounding precision) or when a statistical significance inequality (e.g., claiming $p < 0.05$ when $\hat{v}_p(E^*) = 0.054$) is violated, broadly speaking.
+
+\subsection{Split Conformal Risk Control and Severity Scoring}
+To prevent uncalibrated neural posteriors from formulating false accusations, we employ split conformal prediction \cite{sadinle2019least,angelopoulos2023conformal}. Applying temperature-scaled posterior probabilities $\hat{P}_{\Theta, T}(y \mid x_i)$, we specify the non-conformity score $s_i = s(x_i, y_i^*) = 1 - \hat{P}_{\Theta, T}(y_i^* \mid x_i)$. Let $\mathcal{D}_{\text{cal}} = \{(x_i, y_i^*)\}_{i=1}^{n_{\text{cal}}}$ be an exchangeable calibration set of expert-annotated claim--evidence pairs $x_i = (c_i, E_i^*)$ with ground-truth label $y_i^* \in \mathcal{Y}$. Building on this observation, for a user-specified miscoverage risk level $\alpha \in (0, 1)$ (e.g., $\alpha = 0.05$), let $\hat{q}_{1-\alpha}$ be the finite-sample corrected empirical quantile over $\{s_1, \dots, s_{n_{\text{cal}}}\}$:
+\begin{equation}
+\hat{q}_{1-\alpha} = \text{Quantile}\!\left(\{s_1, \dots, s_{n_{\text{cal}}}\};\; \frac{\lceil (n_{\text{cal}} + 1)(1 - \alpha) \rceil}{n_{\text{cal}}}\right).
+\label{eq:conformal_quantile}
+\end{equation}
+For a new test pair $x_{\text{test}} = (c_k, E^*)$, the split conformal prediction set is gathered as:
+\begin{equation}
+\mathcal{C}_{\alpha}(c_k, E^*) = \left\{ y \in \mathcal{Y} \;:\; 1 - \hat{P}_{\Theta, T}(y \mid c_k, E^*) \leq \hat{q}_{1-\alpha} \right\}.
+\label{eq:conformal_set}
+\end{equation}
+$\mathcal{C}_{\alpha}(c_k, E^*)$ fulfills the finite-sample insignificant coverage guarantee $\mathbb{P}(y^*_{\text{test}} \in \mathcal{C}_{\alpha}(c_k, E^*)) \geq 1 - \alpha$ regardless of the fundamental neural architecture by the exchangeability theorem of split conformal prediction \cite{sadinle2019least,angelopoulos2023conformal}, in many respects.
+
+Finally, for claims flagged as misaligned, we compute a bounded Misinterpretation Severity Score $\mathcal{S}_{\text{sev}}(c_k, E^*) \in [0, 1]$ to prioritize human editorial triage:
+\begin{equation}
+\begin{aligned}
+\mathcal{S}_{\text{sev}}(c_k, E^*) = h_{\text{doc}} \cdot \sigma\Big( & \alpha_1 \hat{P}_{\Theta, T}(\textsc{Contradicted} \mid c_k, E^*) \\
+& + \alpha_2 \max(0, \Delta_{\mathcal{E}}) + \alpha_3 D_{\text{scope}}(c_k, E^*) \\
+& + \alpha_4 \min(1, \delta_{\text{num}} / \tau_{\text{num}}) \Big),
+\end{aligned}
+\label{eq:severity}
+\end{equation}
+where $\sigma(\cdot)$ is the logistic normalization function, $\alpha_1, \dots, \alpha_4 > 0$ are notably severity weights; also multiplying by the document access indicator $h_{\text{doc}} \in \{0, 1\}$ secures that paywall-truncated sources ($h_{\text{doc}} = 0$) are never allocated high misinterpretation severity without full-text inspection, in actual application.
+
+\subsection{End-to-End Algorithmic Procedure}
+Table~\ref{tab:algorithm_cedar} formalizes the complete end-to-end execution of the CEDAR framework for auditing a manuscript $D_{\text{cite}}$, in actual application.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\caption{Algorithm 1: End-to-End CEDAR Citation Verification Procedure}
+\label{tab:algorithm_cedar}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\columnwidth}{Y}
+\toprule
+\textbf{Input:} Citing PDF $D_{\text{cite}}$, calibration quantile $\hat{q}_{1-\alpha}$, thresholds $(\tau_{\text{attr}}, \tau_{\text{mod}}, \tau_{\text{scope}}, \epsilon_{\text{tol}})$. \\
+\textbf{Output:} Audit report $\mathcal{R} = \{\mathcal{V}(c_{i,k}, D_{\text{src}}^{(j)})\}$ for all inline citations. \\
+\midrule
+1: Parse $D_{\text{cite}}$ via GROBID \cite{lopez2009grobid} into sentence sequence $\mathcal{S}$, inline anchors $\mathcal{A}$, and bibliography $\mathcal{B}$. \\
+2: Initialize audit report $\mathcal{R} \leftarrow \emptyset$. \\
+3: \textbf{for each} inline citation anchor $a_i \in \mathcal{A}$ in focal sentence $s_{t(i)}$ \textbf{do} \\
+4: \hspace{0.8em} Resolve $b_j \leftarrow \mu(a_i)$ via Crossref/OpenAlex/S2ORC \cite{lo2020s2orc}. \\
+5: \hspace{0.8em} \textbf{if} $b_j$ does not resolve to an authentic catalog record \textbf{then} \\
+6: \hspace{1.6em} Append $(\text{Anchor } a_i, \textsc{Phantom/Fabricated Citation})$ to $\mathcal{R}$; \textbf{continue}. \\
+7: \hspace{0.8em} \textbf{end if} \\
+8: \hspace{0.8em} Set horizon flag $h_{\text{doc}} \leftarrow 1$ if full text of $D_{\text{src}}^{(j)}$ is retrieved, else $h_{\text{doc}} \leftarrow 0$. \\
+9: \hspace{0.8em} Index $D_{\text{src}}^{(j)}$ into $\mathcal{U}_{\text{prose}} \cup \mathcal{U}_{\text{table}} \cup \mathcal{U}_{\text{fig}}$ with section tags $z(e_r)$ (Eq.~\ref{eq:source_units}). \\
+10: \hspace{0.5em} Compute optimal discourse window $C^*(a_i)$ via cohesion objective (Eqs.~\ref{eq:window_opt}--\ref{eq:cohesion_score}). \\
+11: \hspace{0.5em} Decompose $C^*(a_i)$ into decontextualized atomic claims $\{c_1, \dots, c_m\}$ \cite{kamoi2023wice,min2023factscore}. \\
+12: \hspace{0.5em} Filter claims attributed to $a_i$: $\mathcal{C}(a_i) \leftarrow \{c_k : A(c_k, a_i) \geq \tau_{\text{attr}}\}$ (Eqs.~\ref{eq:bipartite_logit}--\ref{eq:bipartite}). \\
+13: \hspace{0.5em} \textbf{for each} attributed atomic claim $c_{i,k} \in \mathcal{C}(a_i)$ \textbf{do} \\
+14: \hspace{1.3em} Retrieve top-$K_1$ candidates via SW-RRF score $S_{\text{SW-RRF}}(c_{i,k}, e_r)$ (Eqs.~\ref{eq:bm25}--\ref{eq:sw_rrf}). \\
+15: \hspace{1.3em} Rerank top-$K_1$ via cross-encoder $g_{\text{cross}}$ to obtain top-$K_2$ rationale set $E^*$. \\
+16: \hspace{1.3em} Compute calibrated NLI posteriors $\hat{P}_{\Theta, T}(y \mid c_{i,k}, E^*)$ over $y \in \mathcal{Y}$. \\
+17: \hspace{1.3em} Compute $\Delta_{\mathcal{E}}(c_{i,k}, E^*)$ (Eq.~\ref{eq:epistemic_delta}), $D_{\text{scope}}(c_{i,k}, E^*)$ (Eq.~\ref{eq:scope_div}), and $\delta_{\text{num}}(c_{i,k}, E^*)$ (Eq.~\ref{eq:num_check}). \\
+18: \hspace{1.3em} Construct conformal prediction set $\mathcal{C}_{\alpha}(c_{i,k}, E^*)$ using quantile $\hat{q}_{1-\alpha}$ (Eq.~\ref{eq:conformal_set}). \\
+19: \hspace{1.3em} \textbf{if} $|\mathcal{C}_{\alpha}(c_{i,k}, E^*)| > 1$ \textbf{or} $h_{\text{doc}} == 0$ \textbf{then} \\
+20: \hspace{2.1em} Set routing status $\leftarrow \textsc{Abstain / Human Expert Audit Required}$. \\
+21: \hspace{1.3em} \textbf{else} \\
+22: \hspace{2.1em} Assign deterministic verdict $\hat{y}_{i,k} \in \mathcal{C}_{\alpha}$ and taxonomy tag $\hat{\tau}_{\text{err}} \in \{\text{T1}, \dots, \text{T8}\}$. \\
+23: \hspace{1.3em} \textbf{end if} \\
+24: \hspace{1.3em} Compute severity $\mathcal{S}_{\text{sev}}(c_{i,k}, E^*)$ (Eq.~\ref{eq:severity}) and compile Verification Card into $\mathcal{R}$. \\
+25: \hspace{0.5em} \textbf{end for} \\
+26: \textbf{end for} \\
+27: \textbf{return} $\mathcal{R}$. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Critical Analysis of Large Language Models as Verification Engines}
+\label{sec:llm_critique}
+
+While instruction-tuned LLMs have showed strong zero-shot capabilities in decomposing compound claims \cite{kamoi2023wice,min2023factscore} and explaining \cite{gao2023enabling,rashkin2023measuring}, rolling out unconstrained generative LLMs as standalone citation verifiers introduces four recorded failure modes:
+\begin{enumerate}
+\item \textbf{Parametric Memory Override (Prior Knowledge Intrusion):} Because, LLMs encode broad scientific consensus, within the their pretrained coefficients, an LLM prompted to corroborate whether a particular mentioned paper $D_{\text{src}}^{(j)}$ supports a generally accepted scientific statement often outputs \textsc{Supported} even when $D_{\text{src}}^{(j)}$ never interrogated that proposition \cite{rashkin2023measuring,gao2023enabling}, in many respects; conditional attribution $P(c_k \mid E^*)$ rather than minor plausibility $P_{\text{LLM}}(c_k)$ must strictly be measured by verification, on the whole.
+\item \textbf{Long-Context ``Lost in the Middle'' Degradation:} Empirical assessments by Liu et al.\ \cite{liu2024lost} are proving that LLM recall drops sharply when applicable evidentiary sentences reside in the middle third of a long context window, explaining CEDAR's modular SW-RRF + cross-encoder retrieval hierarchy (Stages 7--8), in many respects. Against this backdrop, passing an entire 10,000-word manuscript directly into a long-context LLM prompt causes severe retrieval degradation, in real-world scenarios.
+\item \textbf{Confabulatory Bridging and Sycophantic Framing Bias:} Generative models are clearing an affirmative bias toward the validating the user-supplied claim and may confabulate unstated biochemical or mathematical stages to bridge a logical gap between $E^*$ and $c_k$, when offered with an authoritative-sounding citing sentence, to a significant degree.
+\item \textbf{Fragility on Tabular and Numerical Inequalities:} Autoregressive token predictors regularly fail on multi-row table aggregations, confidence-interval overlap checks, and relative percentage comparisons \cite{lu2023scitab,akhtar2023reading}, in actual application. CEDAR mitigates this vulnerability by delegating quantitative comparisons to symbolic inequality checks (Eq.~\ref{eq:num_check}) over organized table reads \cite{herzig2020tapas}, in real-world scenarios.
+\end{enumerate}
+
+\section{Proposed Reproducible Evaluation Methodology}
+\label{sec:evaluation}
+
+\emph{Methodological Transparency Note:} Following strict standards of scientific reproducibility, no synthetic experimental scores or fabricated benchmark tables are reported in this inquiry, to a significant degree; indeed, alternatively, a thorough, fully reproducible experimental design and evaluation protocol for benchmarking CEDAR against established baselines is recommended, broadly speaking.
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\caption{Proposed Multi-Dimensional Evaluation Protocol, Metrics, and Baseline Comparison Suite}
+\label{tab:evaluation_metrics}
+\renewcommand{\arraystretch}{1.14}
+\begin{tabularx}{\textwidth}{L{2.7cm} L{3.3cm} L{4.2cm} Y}
+\toprule
+\textbf{Evaluation Dimension} & \textbf{Primary Quantitative Metrics} & \textbf{Mathematical Definition / Criterion} & \textbf{Target Baselines \& Statistical Testing Protocol} \\
+\midrule
+1. Atomic Claim Decomposition (RQ1) & Claim-Anchor Binding F1; Pronominal Decontextualization Rate & Harmonic mean of precision and recall over gold bipartite edges $(c_{i,k}, a_i)$ \cite{kamoi2023wice,min2023factscore}. & Single-sentence citance extraction ($w=0$); dependency-only clause splitting; paired bootstrap test ($B=10{,}000$, $p < 0.01$). \\
+2. Multimodal Evidence Retrieval (RQ2) & Recall@$K$ ($K \in \{3, 5, 10\}$); Mean Reciprocal Rank (MRR) & $\text{MRR} = \frac{1}{|Q|}\sum_{q=1}^{|Q|} \frac{1}{\text{rank}_q}$ over gold prose, table, and caption rationales $E_{\text{gold}}^*$. & BM25 \cite{robertson2009probabilistic}; DPR \cite{karpukhin2020dense}; SciBERT \cite{beltagy2019scibert}; SPECTER \cite{cohan2020specter}; ColBERT \cite{khattab2020colbert}; unweighted RRF \cite{cormack2009reciprocal}. \\
+3. Claim-Evidence Entailment \& Taxonomy (RQ3) & Macro-F1; SciFact Label+Rationale F1 \cite{wadden2020fact}; Taxonomy Cohen's $\kappa$ & Strict label + rationale overlap requiring $\hat{y}_{i,k} = y^*_{i,k}$ and $\text{IoU}(E^*, E_{\text{gold}}^*) \geq 0.5$. & scite intent classifier \cite{nicholson2021scite}; MultiVerS \cite{wadden2022multivers}; TaPas+NLI \cite{herzig2020tapas,lu2023scitab}; zero-shot RAG LLM \cite{gao2023enabling}; McNemar's test. \\
+4. Epistemic Delta \& Numerical Audit (RQ3) & Overclaiming Detection F1; Mean Absolute Error on $\Delta_{\mathcal{E}}$; Numerical Recall & Precision/recall on T1/T2 modality shifts ($\Delta_{\mathcal{E}} > \tau_{\text{mod}}$) and T5 numerical errors ($\delta_{\text{num}} > \epsilon_{\text{tol}}$). & Standard 3-way NLI without modality regressor; LLM prompt-only numerical verification \cite{lu2023scitab,akhtar2023reading}. \\
+5. Uncertainty \& Conformal Calibration (RQ4) & Empirical Coverage ($1-\hat{\alpha}$); Mean Set Size $|\mathcal{C}_{\alpha}|$; ECE; Brier Score & $\text{Cov} = \frac{1}{n_{\text{test}}}\sum_{i} \mathbb{I}(y_i^* \in \mathcal{C}_{\alpha}(x_i))$ vs.\ target $1-\alpha$, minimizing $|\mathcal{C}_{\alpha}|$ and false-accusation rate. & Uncalibrated softmax threshold; Temperature Scaling alone; Least Ambiguous Set-Valued Classifiers \cite{sadinle2019least,angelopoulos2023conformal}. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\subsection{Benchmark Construction and Leakage-Free Dataset Splitting}
+To assess all stages of CEDAR, we design a multi-tier evaluation benchmark combining four existing public datasets with a suggested expert-annotated full-text audit corpus:
+\begin{enumerate}
+\item \textbf{Existing Public Benchmarks:} (i) \emph{SciFact} \cite{wadden2020fact} and \emph{MultiVerS} full-text biomedical verification suites \cite{wadden2022multivers}; (ii) \emph{COVID-Fact} \cite{saakyan2021covidfact}; (iii) \emph{WiCE} sub-claim entailment dataset \cite{kamoi2023wice}; and (iv) \emph{SCITAB} \cite{lu2023scitab} and chart-verification datasets \cite{akhtar2023reading} for tabular and visual claim verification, broadly speaking.
+\item \textbf{Full-Text Citation Misinterpretation Audit Protocol:} Inter-annotator agreement is quantified applying Cohen's QLATEXz0003q and Krippendorff's QLATEXz0004q, needing adjudication by a senior third reviewer whenever annotators disagree, broadly speaking. Within this framework, across four dimensions, applying open-access full-text pairs from S2ORC QLATEXz0005q across the biomedicine, computer science, and materials science, domain experts are annotating QLATEXz0000q triples, including gold atomic claims, gold multimodal rationale units QLATEXz0001q, four-way entailment label QLATEXz0002q, and taxonomy class T1--T8, to a significant degree.
+\item \textbf{Citation-Graph Disjoint Splitting (Data Leakage Prevention):} All splits (70\% train, 10\% validation, 10\% conformal calibration $\mathcal{D}_{\text{cal}}$, and 10\% test $\mathcal{D}_{\text{test}}$) must be partitioned by \emph{disjoint cited source documents and citation-graph connected components}, in many respects; indeed, a critical flaw in naive random splitting of citation datasets is \emph{source-document leakage}: if the same cited paper $D_{\text{src}}^{(j)}$ appears in both the training and test splits, neural encoders memorize source-specific facts, in real-world scenarios.
+\end{enumerate}
+
+\subsection{Evaluation Metrics, Baselines, and Statistical Testing}
+Table~\ref{tab:evaluation_metrics} encapsulates the quantitative metrics and baseline comparisons across all five evaluation dimensions; indeed, statistical significance between CEDAR and baseline models is assessed applying McNemar's test for classification decisions and paired bootstrap resampling ($B = 10{,}000$ iterations) with Holm--Bonferroni correction for multiple comparisons, in many respects. In parallel with this, alongside standard retrieval metrics (Recall@$K$, MRR) and strict SciFact Label+Rationale Macro-F1 \cite{wadden2020fact}, calibration is gauged via Expected Calibration Error (ECE), Brier Score, empirical conformal coverage $1-\hat{\alpha}$, and the \textbf{High-Confidence False Accusation Rate (HC-FAR)}: the fraction of genuinely supported citations erroneously designated a singleton $\{\textsc{Contradicted}\}$ conformal prediction set, in real-world scenarios.
+
+\section{Limitations, Threats to Validity, and Future Directions}
+\label{sec:limitations}
+
+\subsection{Technical Limitations and Threats to Validity}
+\begin{enumerate}
+\item \textbf{Commercial Paywalls and Epistemic Horizon Bias:} As established by Larivi{\`e}re et al.\ \cite{lariviere2015oligopoly}, a major share of global scholarly literature remains behind subscription paywalls, to a significant degree; CEDAR must abstain from issuing \textsc{Contradicted} or \textsc{Neutral} misinterpretation verdicts to avoid punishing citations to methodology details or secondary tables located in the paywalled body, when $h_{\text{doc}} = 0$ (abstract-only access), in many respects.
+\item \textbf{Subjectivity of Epistemic Hedging Boundaries:} Distinguishing acceptable rhetorical synthesis from doable overclaiming ($\Delta_{\mathcal{E}} > \tau_{\text{mod}}$) reveals non-trivial expert disagreement, making conformal abstention and human-in-the-loop review fundamental, in actual application; indeed, as, Hyland \cite{hyland1998hedging} and Jergas and Baethge \cite{jergas2015quotation} prioritize, scientific reading exists on a continuum, in real-world scenarios.
+\item \textbf{Complex Multi-Panel Visuals and Mathematical Proofs:} While, TaPas \cite{herzig2020tapas}, SCITAB \cite{lu2023scitab}, and chart reasoning models \cite{akhtar2023reading} are handling ordered tables and standard plots, verifying claims grounded in multi-step symbolic theorem proofs, 3D protein structures, or electrophoretic Western blots is remaining an open computer-vision and formal-verification challenge, on the whole.
+\item \textbf{Absence of Executed Empirical Benchmarks in This Study:} Empirical validation of the exact recall and calibration gains of SW-RRF and $\Delta_{\mathcal{E}}$ is remaining an vital next step before production deployment, because the current examination is providing a methodological framework and theoretical statement without running over a newly curated full-text corpus, to a significant degree.
+\end{enumerate}
+
+\subsection{Future Research Directions}
+Promising extensions of the CEDAR framework include: (i) blending formal theorem provers and computer algebra systems into Stage~10 to validate mathematical developments; (ii) broadening static document-pair verification into the dynamic citation-network auditing that traces the genealogical origin of a distortion, across multi-hop citation graphs \cite{greenberg2009citation,simkin2003read}; and (iii) embedding real-time, privacy-preserving verification assistants directly into LaTeX and word-processing environments to alert authors to modality drift and scope overgeneralization \emph{before} manuscript submission, in many respects.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+Corroborating that a cited publication exists in a bibliographic database is fundamentally separate from validating that its empirical or theoretical content verifies the claim for which it is cited, in real-world scenarios. Misinterpreted but genuine citations bypass standard editorial checks and citation-intent classifiers, allowing exaggerated, overgeneralized, or inverted assertions to accumulate unfounded authority across the scientific literature, in many respects. In this inquiry, existing citation verification paradigms were critically audited and constructed CEDAR, a mathematically grounded framework that is joining cohesion-penalized discourse scoping, bipartite atomic claim-to-anchor breakdown, section-weighted multimodal Reciprocal Rank Fusion over full text and tables, Epistemic Modality Delta ($\Delta_{\mathcal{E}}$) quantification, and split conformal risk control. Within this framework, a principled blueprint for human-in-the-loop scientific citation auditing is, put simply, proved by CEDAR by coupling fine-grained multimodal evidence retrieval with distribution-free uncertainty guarantees and transparent Verification Cards.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
