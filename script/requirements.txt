@@ -1,0 +1,13 @@
+# Minimum versions (not pinned to tested versions; see results/environment.json after a run)
+numpy>=1.24
+pandas>=2.0
+scipy>=1.9
+scikit-learn>=1.2
+matplotlib>=3.7
+seaborn>=0.12
+rank-bm25>=0.2.2
+sentence-transformers>=2.2      # optional: dense retriever (CONFIG["USE_DENSE"])
+transformers>=4.30              # NLI model (CONFIG["USE_NLI"])
+torch>=2.0                      # NLI / dense / optional fine-tuning
+sentencepiece>=0.1.99           # tokenizer of DeBERTa-v3 NLI checkpoints
+notebook>=6.5                   # only for local execution
